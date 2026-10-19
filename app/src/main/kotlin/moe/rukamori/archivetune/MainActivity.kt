@@ -34,6 +34,8 @@ import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
@@ -168,6 +170,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata.MEDIA_TYPE_MUSIC
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -180,6 +183,8 @@ import coil3.request.allowHardware
 import coil3.toBitmap
 import com.valentinilk.shimmer.LocalShimmerTheme
 import dagger.hilt.android.AndroidEntryPoint
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -272,6 +277,7 @@ import moe.rukamori.archivetune.ui.component.LocalMenuState
 import moe.rukamori.archivetune.ui.component.MarkdownText
 import moe.rukamori.archivetune.ui.component.NetworkStatusBanner
 import moe.rukamori.archivetune.ui.component.StarDialog
+import moe.rukamori.archivetune.ui.component.TopAppBarOverflowMenu
 import moe.rukamori.archivetune.ui.component.TopSearch
 import moe.rukamori.archivetune.ui.component.TvNavigationRail
 import moe.rukamori.archivetune.ui.component.rememberBottomSheetState
@@ -300,6 +306,8 @@ import moe.rukamori.archivetune.ui.theme.extractThemeColor
 import moe.rukamori.archivetune.ui.theme.extractWallpaperThemeColor
 import moe.rukamori.archivetune.ui.utils.appBarScrollBehavior
 import moe.rukamori.archivetune.ui.utils.backToMain
+import moe.rukamori.archivetune.ui.utils.navigateToAlbum
+import moe.rukamori.archivetune.ui.utils.navigateToArtist
 import moe.rukamori.archivetune.ui.utils.resetHeightOffset
 import moe.rukamori.archivetune.updates.ObserveUpdateSettingsUseCase
 import moe.rukamori.archivetune.utils.PreferenceStore
@@ -316,6 +324,7 @@ import moe.rukamori.archivetune.viewmodels.BackupCategory
 import moe.rukamori.archivetune.viewmodels.BackupRestoreViewModel
 import moe.rukamori.archivetune.viewmodels.GatekeeperViewModel
 import moe.rukamori.archivetune.viewmodels.HomeViewModel
+import moe.rukamori.archivetune.viewmodels.MainMenuViewModel
 import moe.rukamori.archivetune.viewmodels.NetworkBannerViewModel
 import moe.rukamori.archivetune.viewmodels.NewsViewModel
 import moe.rukamori.archivetune.viewmodels.OnlineSearchSort
@@ -990,6 +999,19 @@ class MainActivity : ComponentActivity() {
                     val homeViewModel: HomeViewModel = hiltViewModel()
                     val networkBannerViewModel: NetworkBannerViewModel = hiltViewModel()
                     val newsViewModel: NewsViewModel = hiltViewModel()
+                    val mainMenuViewModel: MainMenuViewModel = hiltViewModel()
+                    val topAppBarOverflowExpanded by mainMenuViewModel.expanded.collectAsStateWithLifecycle()
+                    val menuProfileState by mainMenuViewModel.profileState.collectAsStateWithLifecycle()
+                    val menuAccountImageUrl by homeViewModel.accountImageUrl.collectAsStateWithLifecycle()
+                    val menuHazeState = rememberHazeState()
+                    val menuLifecycleOwner = LocalLifecycleOwner.current
+                    LaunchedEffect(mainMenuViewModel, navController, menuLifecycleOwner) {
+                        menuLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                            mainMenuViewModel.destinations.collect { destination ->
+                                navController.navigate(destination.route) { launchSingleTop = true }
+                            }
+                        }
+                    }
                     val allLocalItems by homeViewModel.allLocalItems.collectAsState()
                     val allYtItems by homeViewModel.allYtItems.collectAsState()
                     val networkBannerState by networkBannerViewModel.bannerState.collectAsStateWithLifecycle()
@@ -1133,7 +1155,6 @@ class MainActivity : ComponentActivity() {
                             expandedBound = maxHeight,
                         )
                     var homeOverflowMenuExpanded by rememberSaveable { mutableStateOf(false) }
-                    var topAppBarOverflowExpanded by rememberSaveable { mutableStateOf(false) }
                     val showHomeOverflowFab =
                         shouldShowHomeShuffleButton &&
                             !useRail &&
@@ -1145,7 +1166,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     LaunchedEffect(currentRoute) {
-                        topAppBarOverflowExpanded = false
+                        mainMenuViewModel.dismiss()
                     }
 
                     val playerBackground by rememberEnumPreference(
@@ -1954,8 +1975,7 @@ class MainActivity : ComponentActivity() {
                                                             TranslucentTopAppBarIconButton(
                                                                 onClick = {
                                                                     newsTooltipState.dismiss()
-                                                                    topAppBarOverflowExpanded =
-                                                                        !topAppBarOverflowExpanded
+                                                                    mainMenuViewModel.toggle()
                                                                 },
                                                             ) {
                                                                 BadgedBox(badge = {
@@ -1972,28 +1992,16 @@ class MainActivity : ComponentActivity() {
                                                             }
                                                             TopAppBarOverflowMenu(
                                                                 expanded = topAppBarOverflowExpanded,
+                                                                profileState = menuProfileState,
+                                                                accountImageUrl = menuAccountImageUrl,
+                                                                hazeState = menuHazeState,
                                                                 pureBlack = pureBlack,
                                                                 hasUnreadNews = hasUnreadNews,
                                                                 hasUpdateAvailable = hasUpdateAvailable,
-                                                                onDismissRequest = {
-                                                                    topAppBarOverflowExpanded = false
-                                                                },
-                                                                onHistoryClick = {
-                                                                    topAppBarOverflowExpanded = false
-                                                                    navController.navigate("history")
-                                                                },
-                                                                onNewsClick = {
+                                                                onDismissRequest = mainMenuViewModel::dismiss,
+                                                                onSelect = { destination ->
                                                                     newsTooltipState.dismiss()
-                                                                    topAppBarOverflowExpanded = false
-                                                                    navController.navigate("news")
-                                                                },
-                                                                onNewReleaseClick = {
-                                                                    topAppBarOverflowExpanded = false
-                                                                    navController.navigate("new_release")
-                                                                },
-                                                                onSettingsClick = {
-                                                                    topAppBarOverflowExpanded = false
-                                                                    navController.navigate("settings")
+                                                                    mainMenuViewModel.select(destination)
                                                                 },
                                                             )
                                                         }
@@ -2454,7 +2462,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 },
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.fillMaxSize().hazeSource(menuHazeState),
                             ) {
                                 var transitionDirection =
                                     AnimatedContentTransitionScope.SlideDirection.Left
@@ -2482,6 +2490,41 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 }
+
+                                val backEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition =
+                                    remember(disableAnimations, navigationItems) {
+                                        {
+                                            if (disableAnimations) {
+                                                fadeIn(tween(0))
+                                            } else if ((
+                                                    navigationItems.fastAny { it.route == initialState.destination.route } ||
+                                                        initialState.destination.route?.startsWith(OnlineSearchResultRoutePrefix) == true
+                                                ) &&
+                                                navigationItems.fastAny { it.route == targetState.destination.route }
+                                            ) {
+                                                fadeIn(tween(250))
+                                            } else {
+                                                slideInHorizontally(animationSpec = tween(250)) { -it }
+                                            }
+                                        }
+                                    }
+                                val backExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition =
+                                    remember(disableAnimations, navigationItems) {
+                                        {
+                                            if (disableAnimations) {
+                                                fadeOut(tween(0))
+                                            } else if ((
+                                                    navigationItems.fastAny { it.route == initialState.destination.route } ||
+                                                        initialState.destination.route?.startsWith(OnlineSearchResultRoutePrefix) == true
+                                                ) &&
+                                                navigationItems.fastAny { it.route == targetState.destination.route }
+                                            ) {
+                                                fadeOut(tween(200))
+                                            } else {
+                                                slideOutHorizontally(animationSpec = tween(200)) { it }
+                                            }
+                                        }
+                                    }
 
                                 NavHost(
                                     navController = navController,
@@ -2517,32 +2560,26 @@ class MainActivity : ComponentActivity() {
                                             fadeOut(tween(200)) + slideOutHorizontally(animationSpec = tween(200)) { -it }
                                         }
                                     },
-                                    popEnterTransition = {
-                                        if (disableAnimations) {
-                                            fadeIn(tween(0))
-                                        } else if ((
-                                                initialState.destination.route in topLevelScreens ||
-                                                    initialState.destination.route?.startsWith(OnlineSearchResultRoutePrefix) == true
-                                            ) &&
-                                            targetState.destination.route in topLevelScreens
-                                        ) {
-                                            fadeIn(tween(250))
+                                    popEnterTransition = backEnterTransition,
+                                    popExitTransition = backExitTransition,
+                                    predictivePopEnterTransition = { _ ->
+                                        if (targetState.destination.route?.startsWith(OnlineSearchResultRoutePrefix) == true) {
+                                            if (disableAnimations) {
+                                                fadeIn(tween(0))
+                                            } else if (initialState.destination.route?.startsWith(OnlineSearchResultRoutePrefix) == true) {
+                                                fadeIn(tween(250))
+                                            } else {
+                                                fadeIn(tween(250)) + slideInHorizontally { -it / 2 }
+                                            }
                                         } else {
-                                            slideInHorizontally(animationSpec = tween(250)) { -it }
+                                            backEnterTransition()
                                         }
                                     },
-                                    popExitTransition = {
-                                        if (disableAnimations) {
-                                            fadeOut(tween(0))
-                                        } else if ((
-                                                initialState.destination.route in topLevelScreens ||
-                                                    initialState.destination.route?.startsWith(OnlineSearchResultRoutePrefix) == true
-                                            ) &&
-                                            targetState.destination.route in topLevelScreens
-                                        ) {
-                                            fadeOut(tween(200))
+                                    predictivePopExitTransition = { _ ->
+                                        if (initialState.destination.route?.startsWith(OnlineSearchResultRoutePrefix) == true) {
+                                            fadeOut(tween(if (disableAnimations) 0 else 200))
                                         } else {
-                                            slideOutHorizontally(animationSpec = tween(200)) { it }
+                                            backExitTransition()
                                         }
                                     },
                                     modifier =
@@ -2832,7 +2869,7 @@ class MainActivity : ComponentActivity() {
                                 .albumSongs(playlistId)
                                 .onSuccess { songs ->
                                     songs.firstOrNull()?.album?.id?.let { browseId ->
-                                        navController.navigate("album/$browseId")
+                                        navController.navigateToAlbum(browseId)
                                     }
                                 }.onFailure { reportException(it) }
                         }
@@ -2844,13 +2881,13 @@ class MainActivity : ComponentActivity() {
 
             "browse" -> {
                 uri.lastPathSegment?.let { browseId ->
-                    navController.navigate("album/$browseId")
+                    navController.navigateToAlbum(browseId)
                 }
             }
 
             "channel", "c" -> {
                 uri.lastPathSegment?.let { artistId ->
-                    navController.navigate("artist/$artistId")
+                    navController.navigateToArtist(artistId)
                 }
             }
 
@@ -3213,99 +3250,6 @@ private fun HomeOverflowFab(
                 colors = menuItemColors,
             )
         }
-    }
-}
-
-@Composable
-private fun TopAppBarOverflowMenu(
-    expanded: Boolean,
-    pureBlack: Boolean,
-    hasUnreadNews: Boolean,
-    hasUpdateAvailable: Boolean,
-    onDismissRequest: () -> Unit,
-    onHistoryClick: () -> Unit,
-    onNewsClick: () -> Unit,
-    onNewReleaseClick: () -> Unit,
-    onSettingsClick: () -> Unit,
-) {
-    val itemColors =
-        MenuDefaults.itemColors(
-            textColor = if (pureBlack) Color.White else MaterialTheme.colorScheme.onSurface,
-            leadingIconColor =
-                if (pureBlack) {
-                    Color.White.copy(alpha = 0.82f)
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-        )
-
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismissRequest,
-        shape = RoundedCornerShape(24.dp),
-        containerColor = if (pureBlack) Color.Black else MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 6.dp,
-    ) {
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.history)) },
-            onClick = onHistoryClick,
-            leadingIcon = {
-                HomeOverflowMenuIcon(
-                    iconRes = R.drawable.history,
-                    contentDescription = null,
-                    pureBlack = pureBlack,
-                )
-            },
-            colors = itemColors,
-        )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.news)) },
-            onClick = onNewsClick,
-            leadingIcon = {
-                BadgedBox(badge = {
-                    if (hasUnreadNews) {
-                        Badge()
-                    }
-                }) {
-                    HomeOverflowMenuIcon(
-                        iconRes = R.drawable.newspaper,
-                        contentDescription = null,
-                        pureBlack = pureBlack,
-                    )
-                }
-            },
-            colors = itemColors,
-        )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.new_release_albums)) },
-            onClick = onNewReleaseClick,
-            leadingIcon = {
-                HomeOverflowMenuIcon(
-                    iconRes = R.drawable.new_release,
-                    contentDescription = null,
-                    pureBlack = pureBlack,
-                )
-            },
-            colors = itemColors,
-        )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.settings)) },
-            onClick = onSettingsClick,
-            leadingIcon = {
-                BadgedBox(badge = {
-                    if (hasUpdateAvailable) {
-                        Badge()
-                    }
-                }) {
-                    HomeOverflowMenuIcon(
-                        iconRes = R.drawable.settings,
-                        contentDescription = null,
-                        pureBlack = pureBlack,
-                    )
-                }
-            },
-            colors = itemColors,
-        )
     }
 }
 
