@@ -10,7 +10,6 @@
 package moe.rukamori.archivetune.ui.player
 
 import android.content.Context
-import android.content.res.Configuration
 import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.media.AudioManager
@@ -110,7 +109,6 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
@@ -126,6 +124,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.Player.STATE_BUFFERING
+import androidx.media3.common.Player.STATE_ENDED
 import androidx.media3.common.Player.STATE_READY
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -148,6 +147,8 @@ import moe.rukamori.archivetune.LocalDownloadUtil
 import moe.rukamori.archivetune.LocalPlayerConnection
 import moe.rukamori.archivetune.R
 import moe.rukamori.archivetune.canvas.CanvasPlaybackRequest
+import moe.rukamori.archivetune.ui.utils.navigateToAlbum
+import moe.rukamori.archivetune.ui.utils.navigateToArtist
 import moe.rukamori.archivetune.viewmodels.CanvasPlaybackViewModel
 import moe.rukamori.archivetune.viewmodels.CanvasPlaybackState
 import moe.rukamori.archivetune.viewmodels.ImmersivePlayerViewModel
@@ -829,11 +830,11 @@ fun BottomSheetPlayer(
             when (event) {
                 is ImmersivePlayerEvent.OpenAlbum -> {
                     state.collapseSoft()
-                    navController.navigate("album/${event.id}")
+                    navController.navigateToAlbum(event.id)
                 }
                 is ImmersivePlayerEvent.OpenArtist -> {
                     state.collapseSoft()
-                    navController.navigate("artist/${event.id}")
+                    navController.navigateToArtist(event.id)
                 }
                 ImmersivePlayerEvent.OpenMenu -> {
                     val metadata = mediaMetadata ?: return@collect
@@ -1242,7 +1243,7 @@ fun BottomSheetPlayer(
             ?.video
         val artworkCanvas = resolvedCanvas
 
-        val controlsContent: @Composable ColumnScope.(MediaMetadata) -> Unit = { mediaMetadata ->
+        val controlsContent: @Composable ColumnScope.(MediaMetadata, Boolean) -> Unit = { mediaMetadata, landscape ->
             PlayerControlsContent(
                 mediaMetadata = mediaMetadata,
                 playerDesignStyle = playerDesignStyle,
@@ -1269,6 +1270,7 @@ fun BottomSheetPlayer(
                 onSliderValueChange = onSliderValueChange,
                 onSliderValueChangeFinished = onSliderValueChangeFinished,
                 currentFormat = if (playerDesignStyle == PlayerDesignStyle.V7) currentFormat else null,
+                landscape = landscape,
             )
         }
 
@@ -1295,8 +1297,8 @@ fun BottomSheetPlayer(
 
 // distance
 
-        when (LocalConfiguration.current.orientation) {
-            Configuration.ORIENTATION_LANDSCAPE -> {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            if (maxWidth > maxHeight) {
                 if (playerDesignStyle == PlayerDesignStyle.V5) {
                     val littleBackground = MaterialTheme.colorScheme.primaryContainer
                     val littleTextColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1346,32 +1348,55 @@ fun BottomSheetPlayer(
                                     ),
                         ) {
                             enrichedMetadata?.let { metadata ->
-                                LittlePlayerContent(
-                                    mediaMetadata = metadata,
-                                    sliderPosition = sliderPosition,
-                                    positionMs = position,
-                                    durationMs = duration,
-                                    textColor = littleTextColor,
-                                    liked = currentSongLiked,
-                                    onCollapse = state::collapseSoft,
-                                    onToggleLike = playerConnection::toggleLike,
-                                    onExpandQueue = openQueue,
-                                    onMenuClick = {
-                                        menuState.show {
-                                            PlayerMenu(
-                                                mediaMetadata = metadata,
-                                                navController = navController,
-                                                playerBottomSheetState = state,
-                                                onShowDetailsDialog = {
-                                                    bottomSheetPageState.show {
-                                                        ShowMediaInfo(metadata.id)
-                                                    }
-                                                },
-                                                onDismiss = menuState::dismiss,
-                                            )
-                                        }
+                                LandscapePlayerControls(
+                                    playbackContent = {
+                                        V8TransportControls(
+                                            playbackState = playbackState,
+                                            isPlaying = isPlaying,
+                                            isLoading = isLoading,
+                                            canSkipPrevious = canSkipPrevious,
+                                            canSkipNext = canSkipNext,
+                                            foreground = littleTextColor,
+                                            onPreviousClick = playerConnection::seekToPrevious,
+                                            onPlayPauseClick = {
+                                                if (playbackState == STATE_ENDED) {
+                                                    playerConnection.player.seekTo(0, 0)
+                                                    playerConnection.player.playWhenReady = true
+                                                } else {
+                                                    playerConnection.player.togglePlayPause()
+                                                }
+                                            },
+                                            onNextClick = playerConnection::seekToNext,
+                                        )
                                     },
-                                )
+                                ) {
+                                    LittlePlayerContent(
+                                        mediaMetadata = metadata,
+                                        sliderPosition = sliderPosition,
+                                        positionMs = position,
+                                        durationMs = duration,
+                                        textColor = littleTextColor,
+                                        liked = currentSongLiked,
+                                        onCollapse = state::collapseSoft,
+                                        onToggleLike = playerConnection::toggleLike,
+                                        onExpandQueue = openQueue,
+                                        onMenuClick = {
+                                            menuState.show {
+                                                PlayerMenu(
+                                                    mediaMetadata = metadata,
+                                                    navController = navController,
+                                                    playerBottomSheetState = state,
+                                                    onShowDetailsDialog = {
+                                                        bottomSheetPageState.show {
+                                                            ShowMediaInfo(metadata.id)
+                                                        }
+                                                    },
+                                                    onDismiss = menuState::dismiss,
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -1439,7 +1464,7 @@ fun BottomSheetPlayer(
                                         .padding(bottom = queueSheetState.collapsedBound)
                                         .windowInsetsPadding(
                                             WindowInsets.systemBars.only(
-                                                WindowInsetsSides.Top + WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                                                WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
                                             ),
                                         ).nestedScroll(state.preUpPostDownNestedScrollConnection),
                             )
@@ -1479,7 +1504,7 @@ fun BottomSheetPlayer(
                                     .padding(bottom = queueSheetState.collapsedBound)
                                     .windowInsetsPadding(
                                         WindowInsets.systemBars.only(
-                                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
                                         ),
                                     ).nestedScroll(state.preUpPostDownNestedScrollConnection),
                         )
@@ -1541,52 +1566,37 @@ fun BottomSheetPlayer(
                                     .padding(bottom = queueSheetState.collapsedBound)
                                     .windowInsetsPadding(
                                         WindowInsets.systemBars.only(
-                                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
                                         ),
                                     )
                                     .nestedScroll(state.preUpPostDownNestedScrollConnection),
                         )
                     }
                 } else {
-                    Row(
-                        modifier =
-                            Modifier
-                                .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal))
-                                .padding(bottom = queueSheetState.collapsedBound + 48.dp),
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            val screenWidth = LocalConfiguration.current.screenWidthDp
-                            val thumbnailSize = (screenWidth * 0.4).dp
+                    LandscapePlayerLayout(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(bottom = queueSheetState.collapsedBound)
+                            .windowInsetsPadding(
+                                WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                            ),
+                        artwork = {
                             Thumbnail(
                                 canvas = artworkCanvas,
                                 sliderPositionProvider = { sliderPosition },
-                                modifier = Modifier.size(thumbnailSize),
+                                modifier = Modifier.fillMaxSize(),
                                 isPlayerExpanded = state.isExpanded,
+                                applyStatusBarPadding = false,
                             )
-                        }
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier =
-                                Modifier
-                                    .weight(1f)
-                                    .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top)),
-                        ) {
-                            Spacer(Modifier.weight(1f))
-
-                            enrichedMetadata?.let {
-                                controlsContent(it)
+                        },
+                        controls = {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                enrichedMetadata?.let { controlsContent(it, true) }
                             }
-
-                            Spacer(Modifier.weight(1f))
-                        }
-                    }
+                        },
+                    )
                 }
-            }
-
-            else -> {
+            } else {
                 if (playerDesignStyle == PlayerDesignStyle.V5) {
                     val littleBackground = MaterialTheme.colorScheme.primaryContainer
                     val littleTextColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1862,7 +1872,7 @@ fun BottomSheetPlayer(
                         }
 
                         enrichedMetadata?.let {
-                            controlsContent(it)
+                            controlsContent(it, false)
                         }
 
                         Spacer(Modifier.height(30.dp))
